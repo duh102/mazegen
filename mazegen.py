@@ -33,6 +33,9 @@ class MazeCell(object):
     def getOpenings(self):
         return self._openings
 
+    def setOpenings(self, newOpenings):
+        self._openings = newOpenings
+
     def block(self, blockFrom):
         if blockFrom is None or blockFrom == 0:
             raise Exception('Must block from at least one direction')
@@ -75,6 +78,15 @@ class MazeDefinition(object):
 
     def getEnd(self):
         return self._end
+
+    def getCells(self):
+        return self._cells
+
+    def getWrapX(self):
+        return self._allowWrapX
+
+    def getWrapY(self):
+        return self._allowWrapY
 
     def setStart(self, x, y):
         if (x < 0) or (y < 0) or (x >= self._width) or (y >= self._height):
@@ -127,15 +139,60 @@ class MazeDefinition(object):
                 raise Exception('Didn\'t find other cell when looking for {:s} at (:d, :d)'.format(opening, x, y))
             otherCell.carve(otherDirection)
 
-    def getCells(self):
-        return self._cells
+class MazeFlipper(object):
+    def getNewOpenings(self, openings, flipX, flipY):
+        newOpenings = MazeOpening(0)
+        if flipX:
+            if MazeOpening.EAST in openings:
+                newOpenings = newOpenings | MazeOpening.WEST
+            if MazeOpening.WEST in openings:
+                newOpenings = newOpenings | MazeOpening.EAST
+        else:
+            if MazeOpening.EAST in openings:
+                newOpenings = newOpenings | MazeOpening.EAST
+            if MazeOpening.WEST in openings:
+                newOpenings = newOpenings | MazeOpening.WEST
+        if flipY:
+            if MazeOpening.NORTH in openings:
+                newOpenings = newOpenings | MazeOpening.SOUTH
+            if MazeOpening.SOUTH in openings:
+                newOpenings = newOpenings | MazeOpening.NORTH
+        else:
+            if MazeOpening.NORTH in openings:
+                newOpenings = newOpenings | MazeOpening.NORTH
+            if MazeOpening.SOUTH in openings:
+                newOpenings = newOpenings | MazeOpening.SOUTH
+        return newOpenings
+
+    def flip(self, maze, flipX=None, flipY=None):
+        if flipX is None:
+            flipX = False
+        if flipY is None:
+            flipY = False
+        if not (flipX or flipY):
+            return maze
+        oldCells = maze.getCells()
+        (width, height) = maze.getSize()
+        toRet = MazeDefinition(width, height, maze.getSeed(), maze.getGenerator(), maze.getParams(), allowWrapX=maze.getWrapX(), allowWrapY=maze.getWrapY())
+        newCells = toRet.getCells()
+        for x in range(width):
+            for y in range(height):
+                reflectX = width-1-x if flipX else x
+                reflectY = height-1-y if flipY else y
+                if (x, y) == maze.getStart():
+                    toRet.setStart(reflectX, reflectY)
+                if (x, y) == maze.getEnd():
+                    toRet.setEnd(reflectX, reflectY)
+                oldCell = oldCells[x][y]
+                newCells[reflectX][reflectY].setOpenings(self.getNewOpenings(oldCell.getOpenings(), flipX, flipY))
+        return toRet
 
 class MazePrinter(object):
-    def print(self, mazeDefinition):
+    def print(self, mazeDefinition, args):
         raise Exception('Not implemented')
 
 class MazeGenerator(object):
-    def generate(self, width, height, seed):
+    def generate(self, width, height, seed, args):
         raise Exception('Not implemented')
 
 class PrintoutPrinter(MazePrinter):
@@ -177,7 +234,14 @@ class VerbosePrintoutPrinter(PrintoutPrinter):
 
         return [''.join(line) for line in lines]
 
-    def print(self, mazeDefinition):
+    def print(self, mazeDefinition, args):
+        flipX = False
+        flipY = False
+        if 'flipX' in args.keys():
+            flipX = True if args['flipX'].lower() == 'true' else False
+        if 'flipY' in args.keys():
+            flipY = True if args['flipY'].lower() == 'true' else False
+        mazeDefinition = MazeFlipper().flip(mazeDefinition, flipX=flipX, flipY=flipY)
         (width, height) = mazeDefinition.getSize()
         cells = mazeDefinition.getCells()
         start = mazeDefinition.getStart()
@@ -219,7 +283,14 @@ class SuccinctPrintoutPrinter(PrintoutPrinter):
             return '#'
         return ' '
 
-    def print(self, mazeDefinition):
+    def print(self, mazeDefinition, args):
+        flipX = False
+        flipY = False
+        if 'flipX' in args.keys():
+            flipX = True if args['flipX'].lower() == 'true' else False
+        if 'flipY' in args.keys():
+            flipY = True if args['flipY'].lower() == 'true' else False
+        mazeDefinition = MazeFlipper().flip(mazeDefinition, flipX=flipX, flipY=flipY)
         (width, height) = mazeDefinition.getSize()
         cells = mazeDefinition.getCells()
         start = mazeDefinition.getStart()
@@ -282,9 +353,16 @@ class MazeBoxDefinitionPrinter(MazePrinter):
         seed = mazeDefinition.getSeed()
         generator = mazeDefinition.getGenerator()
         params = mazeDefinition.getParams()
+        start = mazeDefinition.getStart()
+        end = mazeDefinition.getEnd()
 
         paramsStr = '({:s})'.format(', '.join('{:s}: {:s}'.format(key, value) for (key,value) in sorted(params.items(), key=lambda p: p[0])))
-        return '// {w:d}x{h:d} maze ({seed})\n// Generated by {gen:s} {params:s}'.format(w=width, h=height, seed=seed, gen=generator, params='' if len(params) == 0 else paramsStr)
+        return '// {w:d}x{h:d} maze ({seed})\n// Generated by {gen:s} {params:s}\n//Start: ({sx:d}, {sy:d})\n//End: ({ex:d}, {ey:d})'.format(w=width,
+                h=height, seed=seed, gen=generator, params='' if len(params) == 0 else paramsStr,
+                sx = start[0],
+                sy = start[1],
+                ex = end[0],
+                ey = end[1])
 
     ## Note for all of these functions, the OpenSCAD script expects 1-indexed positions, where our maze generation uses 0-indexed, so we always add 1 to everything (except width and height, since those are sizes rather than indices)
     def format_linecarve(self, pos0, pos1):
@@ -329,7 +407,14 @@ xgrid = {:d};
 ygrid = {:d};
 '''.format(width, height)
 
-    def print(self, mazeDefinition):
+    def print(self, mazeDefinition, args):
+        flipX = False
+        flipY = False
+        if 'flipX' in args.keys():
+            flipX = True if args['flipX'].lower() == 'true' else False
+        if 'flipY' in args.keys():
+            flipY = True if args['flipY'].lower() == 'true' else False
+        mazeDefinition = MazeFlipper().flip(mazeDefinition, flipX=flipX, flipY=flipY)
         (width, height) = mazeDefinition.getSize()
         cells = mazeDefinition.getCells()
         start = mazeDefinition.getStart()
@@ -449,7 +534,7 @@ class ReceiptMazePrinter(MazePrinter, ReceiptAccessing):
         openings = cell.getOpenings()
         return self.DOUBLE_BAR_MAP.get(openings, self.FULL_BLOCK)
 
-    def print(self, mazeDefinition):
+    def print(self, mazeDefinition, args):
         try:
             import ncr7197
         except Exception as e:
@@ -460,9 +545,17 @@ class ReceiptMazePrinter(MazePrinter, ReceiptAccessing):
         if width > max_maze_width:
             raise Exception('Maximum maze width is {:d}'.format(max_maze_width))
         printer = NCR7197('/dev/ttyUSB0') # going to have to make some parameters to make this work properly
+        flipX = False
+        flipY = False
+        if 'flipX' in args.keys():
+            flipX = True if args['flipX'].lower() == 'true' else False
+        if 'flipY' in args.keys():
+            flipY = True if args['flipY'].lower() == 'true' else False
+        mazeDefinition = MazeFlipper().flip(mazeDefinition, flipX=flipX, flipY=flipY)
         cells = mazeDefinition.getCells()
         start = mazeDefinition.getStart()
         end = mazeDefinition.getEnd()
+
         output = self.getMetadataHeader(mazeDefinition)+'\n\n'
         for y in range(height):
             line = ''
@@ -470,7 +563,7 @@ class ReceiptMazePrinter(MazePrinter, ReceiptAccessing):
                 if (x, y) == start or (x, y) == end:
                     line += '@' if (x, y) == start else 'X'
                 else:
-                    line += self.cell_to_char(cells[x][y])
+                    line += self.cell_to_char(cells[width-1-x][y])
             output += line + '\n'
         printer.print(output + '\n'*PRINT_CUT_OFFSET)
         printer.cut()
@@ -511,7 +604,7 @@ class DrawableReceiptMazePrinter(MazePrinter, ReceiptAccessing):
         paramsStr = '({:s})'.format(', '.join('{:s}: {:s}'.format(key, value) for (key,value) in sorted(params.items(), key=lambda p: p[0])))
         return '{w:d}x{h:d} maze ({seed})\nGenerated by {gen:s} {params:s}'.format(w=width, h=height, seed=seed, gen=generator, params='' if len(params) == 0 else paramsStr)
 
-    def print(self, mazeDefinition):
+    def print(self, mazeDefinition, args):
         try:
             import ncr7197
         except Exception as e:
@@ -522,9 +615,17 @@ class DrawableReceiptMazePrinter(MazePrinter, ReceiptAccessing):
         if width > max_maze_width:
             raise Exception('Maximum maze width is {:d}'.format(max_maze_width))
         printer = NCR7197('/dev/ttyUSB0') # going to have to make some parameters to make this work properly
+        flipX = False
+        flipY = False
+        if 'flipX' in args.keys():
+            flipX = True if args['flipX'].lower() == 'true' else False
+        if 'flipY' in args.keys():
+            flipY = True if args['flipY'].lower() == 'true' else False
+        mazeDefinition = MazeFlipper().flip(mazeDefinition, flipX=flipX, flipY=flipY)
         cells = mazeDefinition.getCells()
         start = mazeDefinition.getStart()
         end = mazeDefinition.getEnd()
+
         field_transform = lambda v: v*2+1
         field_width = field_transform(width)
         field_height = field_transform(height)
@@ -567,7 +668,10 @@ class DrawableReceiptMazePrinter(MazePrinter, ReceiptAccessing):
                 elif end == loc:
                     field[fx][fy] = 'X'
                 else:
-                    field[fx][fy] = ' '
+                    if openings == MazeOpening(0):
+                        field[fx][fy] = self.HALF_FILL
+                    else:
+                        field[fx][fy] = ' '
                 # handle top
                 if MazeOpening.NORTH in openings:
                     field[fx][fy-1] = ' '
@@ -675,7 +779,7 @@ class RandomTipCarverMazeBuilder(object):
 class MazeBoxGenerator(MazeGenerator):
     SAFE_HEIGHT = 3 # height that must be reserved for the exit line    
 
-    def generate(self, width, totalHeight, seed):
+    def generate(self, width, totalHeight, seed, args):
         # Constraints:
         #  * No maze elements at Y=0 apart from the start
         #  * No maze elements at Y=(height-4) apart from the end
@@ -709,7 +813,7 @@ class MazeBoxGenerator(MazeGenerator):
         return RandomTipCarverMazeBuilder().generate(maze, visited=visited, rng=rng, wrapXAllowed=True)
 
 class GeneralMazeCarverGenerator(MazeGenerator):
-    def generate(self, width, height, seed):
+    def generate(self, width, height, seed, args):
         if height <= 1:
             raise Exception('Must generate a maze of height >= 1')
         if width <= 1:
@@ -739,7 +843,12 @@ if __name__ == '__main__':
     parser.add_argument('seed', type=int, help='Seed for the resulting maze')
     parser.add_argument('--generator', choices=mazeGenerators.keys(), default=_keyFunc(_mazeGenerators[0]), help='Which generator to use to generate the maze')
     parser.add_argument('--printer', choices=mazePrinters.keys(), default=_keyFunc(_mazePrinters[0]), help='Which printer to use to output the maze; default is %(default)s')
+    parser.add_argument('--gen-arg', action='append', help='Add extra options in name:value format to the generator command')
+    parser.add_argument('--print-arg', action='append', help='Add extra options in name:value format to the print command')
 
     args = parser.parse_args()
 
-    print(mazePrinters.get(args.printer)().print(mazeGenerators.get(args.generator)().generate(args.width, args.height, args.seed)))
+    genargs = {arg[0:arg.index(':')]:arg[arg.index(':')+1:] for arg in args.gen_arg} if args.gen_arg is not None else {}
+    printargs = {arg[0:arg.index(':')]:arg[arg.index(':')+1:] for arg in args.print_arg} if args.print_arg is not None else {}
+
+    print(mazePrinters.get(args.printer)().print(mazeGenerators.get(args.generator)().generate(args.width, args.height, args.seed, genargs), printargs))
