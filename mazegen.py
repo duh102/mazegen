@@ -425,25 +425,64 @@ ygrid = {:d};
                 self.format_gridsize(width, height),
                 'module make_maze(i) {\n'])
         inner = self.format_start(start, width) + '\n// Maze body'
-        intersections = []
+        intersections = set()
         lines = []
         # We have taken care of the beginning and the carve from the beginning to the next layer, so starting from y=1, run upward
+        # We can simplify our generated path map by only outputting carves in straight lines, either vertically or around the circumference of the cylinder
+        # Each line can be continuous until it's interrupted by a wall
+        # We still need to output intersections or stops, but we don't need duplicates for both x and y, so we use a set of coordinates rather than a list
+        # Horizontal lines
+        # (y == 0 is used for the start, skip it)
         for iy in range(height-1):
             y = iy+1
-            # only look up and right, we can go "offscreen" in positive directions but not negative
-            # down is taken care of by the previous line, left is taken care of by the previous cell (or, in the case of wraparounds, the rightmost cell)
+            lineStart = None
             for x in range(width):
+                here = (x, y)
                 cell = cells[x][y]
                 openings = cell.getOpenings()
-                if openings == 0:
-                    continue
-                intersections.append(self.format_intersection((x, y)))
-                if MazeOpening.EAST in openings:
-                    lines.append(self.format_linecarve((x, y), (x+1, y)))
-                if MazeOpening.SOUTH in openings:
-                    lines.append(self.format_linecarve((x, y), (x, y+1)))
-        inner += '\n// Lines\n' + '\n'.join(lines)
-        inner += '\n// Intersections\n' + '\n'.join(intersections)
+                # For horizontal lines, we may have exits to the left or right of the bounds of the maze, so we have to handle them here
+                # We'll just use the x==0 case because it's easier to handle
+                if x == 0 and MazeOpening.WEST in openings:
+                    lineStart = (-1, y)
+                if lineStart is not None: # we're currently making a line
+                    if MazeOpening.EAST not in openings:
+                        # We've hit an end; close this line, add it to the list of lines, and add the endpoints to the set of intersections
+                        lines.append(self.format_linecarve(lineStart, here))
+                        lineStart = None
+                        intersections.add(here)
+                else: # we're not currently making a line
+                    if MazeOpening.EAST in openings:
+                        # we've hit a start; start the line here
+                        lineStart = here
+                        intersections.add(here)
+            if lineStart is not None:
+                # We didn't hit an end before getting to the end of the grid; make a line ending outside the maze
+                lines.append(self.format_linecarve(lineStart, (width, y)))
+        # Vertical lines
+        for x in range(width):
+            lineStart = None
+            for iy in range(height-1):
+                y = iy+1
+                here = (x, y)
+                cell = cells[x][y]
+                openings = cell.getOpenings()
+                # It's not possible to have off-grid lines vertically, so we have very simple logic here
+                # we start a line when there's no line and we end it when there's no opening
+                if lineStart is not None: # we're currently making a line
+                    # No need to check for intersections, those were already taken care of by the horizontal lines
+                    if MazeOpening.SOUTH not in openings:
+                        # We've hit an end; cap the current line and register an intersection
+                        lines.append(self.format_linecarve(lineStart, here))
+                        lineStart = None
+                        intersections.add(here)
+                if lineStart is None and MazeOpening.SOUTH in openings:
+                    lineStart = here
+                    intersections.add(here)
+            if lineStart is not None:
+                # We didn't hit an end before getting to the end of the grid; make a line ending outside the maze
+                lines.append(self.format_linecarve(lineStart, (x, height)))
+        inner += '\n// Lines (' + str(len(lines)) + ')\n' + '\n'.join(lines)
+        inner += '\n// Intersections (' + str(len(intersections)) + ')\n' + '\n'.join(self.format_intersection(s) for s in intersections)
         output += textwrap.indent(inner, ' '*self.INDENT)
         output += '\n}'
 
